@@ -1,0 +1,8 @@
+# These sources are read as exact bytes by the test suite, and the PowerShell
+# and VBScript helpers under scripts/ are executed as written, so git must never
+# rewrite line endings or encodings on checkout.
+* -text
+
+# Binary assets (notification sounds and documentation screenshots).
+*.wav binary
+*.png binary

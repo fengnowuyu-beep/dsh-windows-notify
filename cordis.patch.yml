@@ -1,0 +1,10 @@
+# dsh-windows-notify bundle patch
+#
+# Applied as a profile bundle layer (through the `dsh.bundle.patch` manifest
+# field). It inserts the one Loader row that owns both halves: the Node half
+# (lib/index.js - event wiring, settings document, preview/test routes) and the
+# browser half (lib/client.js - the settings page), which the client module
+# system discovers from `dsh.client` in package.json.
+- insert:
+    - id: windows-notify
+      name: 'dsh-windows-notify'

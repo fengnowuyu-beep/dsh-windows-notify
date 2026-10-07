@@ -1,0 +1,52 @@
+{
+  "name": "dsh-windows-notify",
+  "version": "1.1.0",
+  "description": "Windows 桌面通知 + 分场景提示音：对话完成、出错、等待审批、等待确认（计划评审）、等待回答、需要登录 · Desktop notifications with a distinct cue per DSH event",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "engines": {
+      "dsh": ">=0.2.0-rc.1"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ],
+      "platform": "web"
+    }
+  },
+  "files": [
+    "lib",
+    "scripts",
+    "assets",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node test/host.test.mjs && node test/client.test.mjs",
+    "test:live": "node test/integration.mjs"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "notification",
+    "windows",
+    "sound",
+    "toast"
+  ],
+  "license": "MIT"
+}
