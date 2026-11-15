@@ -1,4 +1,18 @@
-# Ask every visible dsh-notify popup to close, the same way clicking one does.
+# Close every visible dsh-notify popup.
+#
+# A popup is a whole process, and a borderless WPF card has no system menu, so
+# WM_CLOSE cannot reach its handler: ending the process is what clicking the
+# card's own close glyph achieves anyway.
+#
+#   -Wait  poll until no card is left (a card whose launcher had only just
+#          started appears a moment after the first sweep). Probes use it so
+#          they start from a known-empty corner instead of counting somebody
+#          else's leftover cards.
+param(
+  [switch]$Wait,
+  [int]$TimeoutMs = 4000
+)
+
 Add-Type -TypeDefinition @'
 using System;
 using System.Text;
@@ -31,14 +45,24 @@ public static class PopupCloser {
 }
 '@
 
-foreach ($pidValue in [PopupCloser]::Pids('dsh-notify')) {
-  try {
-    # A borderless WPF window has no system menu, so WM_CLOSE cannot reach its
-    # handler; ending the popup process is what a click achieves anyway (the
-    # card is the whole process).
-    Stop-Process -Id $pidValue -Force -ErrorAction Stop
-    Write-Output "closed pid $pidValue"
-  } catch {
-    Write-Output "pid $pidValue already gone"
+$deadline = (Get-Date).AddMilliseconds($TimeoutMs)
+$closed = 0
+do {
+  $pids = [PopupCloser]::Pids('dsh-notify')
+  foreach ($pidValue in $pids) {
+    try {
+      Stop-Process -Id $pidValue -Force -ErrorAction Stop
+      $closed++
+      Write-Output "closed pid $pidValue"
+    } catch {
+      Write-Output "pid $pidValue already gone"
+    }
   }
+  if (-not $Wait) { break }
+  Start-Sleep -Milliseconds 250
+} while ((Get-Date) -lt $deadline -and [PopupCloser]::Pids('dsh-notify').Count -gt 0)
+
+if ($Wait) {
+  $left = [PopupCloser]::Pids('dsh-notify').Count
+  Write-Output ("closed: {0}; still visible: {1}" -f $closed, $left)
 }

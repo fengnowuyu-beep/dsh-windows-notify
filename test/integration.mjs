@@ -27,10 +27,10 @@ const listPopups = () => runHelper('list-windows.ps1')
   .split(/\r?\n/)
   .filter(line => line.trim().startsWith('hwnd='))
 
-/** Ask every visible popup to close, through the same path a click takes. */
+/** Ask every visible popup to close, and wait until the corner is really empty. */
 const closePopups = () => {
   try {
-    runHelper('close-windows.ps1')
+    runHelper('close-windows.ps1', ['-Wait'])
   } catch {
     // Best effort.
   }

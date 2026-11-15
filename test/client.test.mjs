@@ -110,7 +110,9 @@ test('apply() registers the dictionaries and the settings section', () => {
   assert.equal(registrations[0].options.id, 'windows-notify')
   assert.equal(registrations[0].options.locale, 'windows-notify')
   assert.equal(typeof registrations[0].options.label(), 'string')
-  assert.equal(effects.length, 2)
+  // Dictionaries, the settings page, and the click-to-open relay. Node has no
+  // EventSource, so the relay registers a no-op disposer here.
+  assert.equal(effects.length, 3)
 })
 
 test('both dictionaries carry every kind key and the same key set', () => {
@@ -176,6 +178,45 @@ test('the duration slider puts "stay" at its far right', () => {
 
 test('the empty draft defaults to a card that stays', () => {
   assert.equal(exports.__internals.emptyDraft().popupSeconds, 0)
+})
+
+test('a clicked notification opens its conversation', () => {
+  const { openConversation } = exports.__internals
+  const opened = []
+  const ctx = { get: (key) => (key === 'uiWorkspace' ? { openSession: (id) => opened.push(id) } : undefined) }
+
+  assert.equal(openConversation(ctx, JSON.stringify({ sessionId: 'session-abc' })), true)
+  assert.deepEqual(opened, ['session-abc'])
+})
+
+test('a click is ignored when there is nothing to open', () => {
+  const { openConversation } = exports.__internals
+  const opened = []
+  const ctx = { get: () => ({ openSession: (id) => opened.push(id) }) }
+
+  assert.equal(openConversation(ctx, '{ not json'), false)
+  assert.equal(openConversation(ctx, JSON.stringify({})), false)
+  assert.equal(openConversation(ctx, JSON.stringify({ sessionId: '' })), false)
+  assert.deepEqual(opened, [])
+})
+
+test('a click is ignored while the page is hidden', () => {
+  const { openConversation } = exports.__internals
+  const opened = []
+  const ctx = { get: () => ({ openSession: (id) => opened.push(id) }) }
+  globalThis.document = { visibilityState: 'hidden' }
+  try {
+    assert.equal(openConversation(ctx, JSON.stringify({ sessionId: 'session-abc' })), false)
+    assert.deepEqual(opened, [])
+  } finally {
+    delete globalThis.document
+  }
+})
+
+test('a click without the workspace service is ignored, not thrown', () => {
+  const { openConversation } = exports.__internals
+  const ctx = { get: () => undefined }
+  assert.equal(openConversation(ctx, JSON.stringify({ sessionId: 'session-abc' })), false)
 })
 
 console.log(`\n${passed} test(s) passed${process.exitCode === 1 ? ', with failures' : ''}`)

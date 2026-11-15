@@ -6,14 +6,14 @@
  * about how a popup looks. Run with `node test/host.test.mjs`.
  */
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { apply, inspector, WindowsNotify } from '../lib/index.js'
 import { buildNotification, clip, describeError, pickDisplayReason, sessionLabel } from '../lib/catalog.js'
-import { buildPayload } from '../lib/notifier.js'
+import { buildPayload, createNotifier } from '../lib/notifier.js'
 import {
   composeSettings,
   DEFAULTS,
@@ -28,6 +28,9 @@ import {
 
 const scriptRoot = dirname(dirname(fileURLToPath(import.meta.url)))
 const sandbox = mkdtempSync(join(tmpdir(), 'dsh-windows-notify-test-'))
+
+/** A throwaway harness home for one test. */
+const tempHome = (prefix = 'dsh-wn-') => mkdtempSync(join(tmpdir(), prefix))
 
 let passed = 0
 const test = (name, body) => {
@@ -286,6 +289,42 @@ test('buildPayload omits a sound when the cue is silent', () => {
   assert.equal(parsed.sound, '')
 })
 
+test('buildPayload carries the click-to-open target only for a conversation', () => {
+  const withSession = JSON.parse(buildPayload(
+    { title: 't', body: 'b', accent: '#fff', badge: 'x', sound: 'none', sessionId: 'session-abc' },
+    { soundPath: null, seconds: 0, stateDir: 'C:\\state' }
+  ).slice(1))
+  assert.equal(withSession.sessionId, 'session-abc')
+  assert.equal(withSession.stateDir, 'C:\\state')
+  assert.equal(withSession.focusApp, 'DeepSeek Harness')
+
+  // A card with nothing to open (the sign-in notice) must stay a plain notice.
+  const withoutSession = JSON.parse(buildPayload(
+    { title: 't', body: 'b', accent: '#fff', badge: 'x', sound: 'none' },
+    { soundPath: null, seconds: 0, stateDir: 'C:\\state' }
+  ).slice(1))
+  assert.equal('sessionId' in withoutSession, false)
+  assert.equal('stateDir' in withoutSession, false)
+})
+
+test('buildPayload can point the popup at its own log', () => {
+  // The popup has always had log lines, but nothing ever handed it a path, so a
+  // card that failed to appear left no trace. The probe also reads the element
+  // geometry it reports, which is how a click can be aimed at a real target.
+  const payload = JSON.parse(buildPayload(
+    { title: 't', body: 'b', accent: '#fff', badge: 'x', sound: 'none' },
+    { soundPath: null, seconds: 0, stateDir: 'C:\\state', logFile: 'C:\\state\\popup.log' }
+  ).slice(1))
+  assert.equal(payload.logFile, 'C:\\state\\popup.log')
+
+  // An older Host that sends no log path stays valid: no empty field is written.
+  const withoutLog = JSON.parse(buildPayload(
+    { title: 't', body: 'b', accent: '#fff', badge: 'x', sound: 'none' },
+    { soundPath: null, seconds: 0, stateDir: 'C:\\state' }
+  ).slice(1))
+  assert.equal('logFile' in withoutLog, false)
+})
+
 console.log('# conversation names')
 
 test('the title service is preferred over the log fold', () => {
@@ -332,8 +371,12 @@ test('each notification carries its conversation as the popup slot owner', () =>
   // The slot owner is the conversation, not the Host process: two sessions must
   // be able to keep a card each.
   assert.equal(rec.raised[0].ownerId, 'session:abcdefgh-1234')
+  // ...and the card knows which conversation to open when clicked.
+  assert.equal(rec.raised[0].sessionId, 'abcdefgh-1234')
   engine.onSignInRequired()
   assert.equal(rec.raised[1].ownerId, 'session:account')
+  // The sign-in notice has no conversation, so clicking it cannot navigate.
+  assert.equal(rec.raised[1].sessionId, undefined)
 })
 
 console.log('# engine')
@@ -477,7 +520,7 @@ test('sign-in demand is de-duplicated on its own key', () => {
 test('describe reports the paths the settings page shows', () => {
   const { engine, home } = makeEngine()
   const view = engine.describe()
-  assert.equal(view.pluginVersion, '1.1.0')
+  assert.equal(view.pluginVersion, '1.4.0')
   assert.equal(view.stateDir, join(home, 'windows-notify'))
   assert.equal(view.popupScript.endsWith(join('scripts', 'notify.ps1')), true)
   assert.equal(view.popupLauncher.endsWith(join('scripts', 'notify-launch.vbs')), true)
@@ -538,7 +581,154 @@ await testAsync('preview plays a cue without raising a popup', async () => {
   assert.equal(rec.raised[0].sound, 'bundled:confirm')
 })
 
+console.log('# click-to-open')
+
+/** A stand-in for one open SSE response. */
+function fakePage() {
+  return {
+    written: [],
+    write(chunk) {
+      this.written.push(chunk)
+      return true
+    },
+    end() {
+      this.ended = true
+    }
+  }
+}
+
+/** Write a focus request the way the clicked popup does. */
+function writeFocusFile(home, sessionId, at = Date.now(), title = '修复登录超时') {
+  const file = join(home, 'windows-notify', 'focus.json')
+  mkdirSync(dirname(file), { recursive: true })
+  writeFileSync(file, `${JSON.stringify({ sessionId, title, at })}\n`, 'utf8')
+  return file
+}
+
+test('a focus request reaches every connected page', () => {
+  const { engine } = makeEngine()
+  const first = fakePage()
+  const second = fakePage()
+  engine.attachEvents(first)
+  engine.attachEvents(second)
+
+  const delivered = engine.broadcastFocus({ sessionId: 'session-abc', title: '修复登录超时' })
+  assert.equal(delivered, 2)
+  for (const page of [first, second]) {
+    const frame = page.written.join('')
+    assert.equal(frame.startsWith('event: focus\ndata: '), true)
+    assert.equal(frame.endsWith('\n\n'), true)
+    const payload = JSON.parse(frame.slice(frame.indexOf('data: ') + 6).trim())
+    assert.equal(payload.sessionId, 'session-abc')
+  }
+})
+
+test('a page that connects late still receives the newest request', () => {
+  const { engine } = makeEngine()
+  engine.broadcastFocus({ sessionId: 'session-late', title: '' })
+  const page = fakePage()
+  engine.attachEvents(page)
+  assert.equal(page.written.join('').includes('session-late'), true)
+})
+
+test('an expired request is not replayed to a new page', () => {
+  const { engine } = makeEngine()
+  engine.broadcastFocus({ sessionId: 'session-old', title: '' })
+  engine.pendingFocus.at = Date.now() - 60_000
+  const page = fakePage()
+  engine.attachEvents(page)
+  assert.equal(page.written.join('').includes('session-old'), false)
+})
+
+test('the popup focus file is read once and only while it is fresh', () => {
+  const home = tempHome('dsh-wn-focus-')
+  const { engine } = makeEngine({}, home)
+  const at = Date.now()
+  writeFocusFile(home, 'session-file', at, '修复登录超时')
+
+  assert.deepEqual(engine.readFocusRequest(), { sessionId: 'session-file', title: '修复登录超时' })
+  // The same request is never relayed twice.
+  assert.equal(engine.readFocusRequest(), undefined)
+
+  // A stale request (a crashed popup's leftovers) is ignored.
+  writeFocusFile(home, 'session-stale', at + 1_000)
+  engine.lastFocusAt = 0
+  const realNow = Date.now
+  Date.now = () => at + 120_000
+  try {
+    assert.equal(engine.readFocusRequest(), undefined)
+  } finally {
+    Date.now = realNow
+  }
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('a malformed focus file is ignored rather than thrown', () => {
+  const home = tempHome('dsh-wn-focus-')
+  const { engine } = makeEngine({}, home)
+  const file = join(home, 'windows-notify', 'focus.json')
+  mkdirSync(dirname(file), { recursive: true })
+  writeFileSync(file, '{ not json', 'utf8')
+  assert.equal(engine.readFocusRequest(), undefined)
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('detaching a page stops the relay to it', () => {
+  const { engine } = makeEngine()
+  const page = fakePage()
+  const detach = engine.attachEvents(page)
+  detach()
+  const delivered = engine.broadcastFocus({ sessionId: 'session-gone', title: '' })
+  assert.equal(delivered, 0)
+})
+
 console.log('# plugin wiring')
+
+test('the popup scripts stay ASCII-only', () => {
+  // Windows PowerShell 5.1 reads a BOM-less UTF-8 script as ANSI, so a
+  // non-ASCII literal in a popup script becomes mojibake whose glyphs the font
+  // renders as blank. Non-ASCII copy belongs in the payload, which is decoded
+  // explicitly as UTF-8.
+  for (const name of ['notify.ps1', 'notify-launch.vbs', 'card-windows.ps1']) {
+    const bytes = readFileSync(join(scriptRoot, 'scripts', name))
+    const offenders = []
+    for (let index = 0; index < bytes.length; index += 1) {
+      if (bytes[index] > 0x7f) offenders.push(index)
+    }
+    assert.equal(offenders.length, 0, `${name} has non-ASCII bytes at ${offenders.slice(0, 5).join(',')}`)
+  }
+})
+
+await testAsync('the notifier can adopt cards that are already on screen', async () => {
+  // Cards outlive the code that raised them (the shipped lifetime is "stay"),
+  // so a build that adds the tool-window style has to reach back and fix the
+  // cards already up, or they keep showing in Alt+Tab until they are closed.
+  // The maintenance script really runs here: a wrong path or a helper that no
+  // longer exists silently turns adoption into a no-op, which is exactly the
+  // failure this catches.
+  const notifier = createNotifier({
+    assetsDir: join(scriptRoot, 'assets'),
+    scriptPath: join(scriptRoot, 'scripts', 'notify.ps1'),
+    launcherPath: join(scriptRoot, 'scripts', 'notify-launch.vbs'),
+    payloadDir: join(sandbox, 'notifier-payloads'),
+    slotDir: join(sandbox, 'notifier-slots'),
+    stateDir: sandbox,
+    ownerId: 'test',
+    logger: { info: () => {}, warn: () => {}, debug: () => {} },
+    getPopupSeconds: () => 0
+  })
+  assert.equal(typeof notifier.adoptExistingCards, 'function')
+  assert.equal(existsSync(join(scriptRoot, 'scripts', 'card-windows.ps1')), true)
+
+  const result = await notifier.adoptExistingCards()
+  assert.equal(result.reason, 'exited', `adoption did not run: ${JSON.stringify(result)}`)
+  assert.equal(result.code, 0, `adoption exited with ${String(result.code)}`)
+  // How many cards were adopted depends on the desktop, so only the run itself
+  // is asserted; `found`/`adopted` are reported for troubleshooting.
+  assert.equal(typeof result.found, 'number')
+  assert.equal(typeof result.adopted, 'number')
+  notifier.dispose()
+})
 
 test('apply() registers every listener and the settings routes', () => {
   const listeners = new Map()
@@ -572,9 +762,9 @@ test('apply() registers every listener and the settings routes', () => {
   }
   assert.equal(routes.length, 1)
   assert.equal(routes[0].path, '/windows-notify/api')
-  // One effect disposes the popup processes, one starts the notifier, and one
-  // owns the settings routes.
-  assert.equal(effects.length, 3)
+  // Popup disposal, popup-host start, settings+event routes, and the focus
+  // watcher.
+  assert.equal(effects.length, 4)
 })
 
 await testAsync('the approval and question listeners delegate with next()', async () => {
@@ -604,7 +794,7 @@ await testAsync('the approval and question listeners delegate with next()', asyn
 
 test('inspector() is side-effect free and reports the six kinds', () => {
   const view = inspector({ logger: { info: () => {}, warn: () => {}, debug: () => {} } })
-  assert.equal(view.version, '1.1.0')
+  assert.equal(view.version, '1.4.0')
   assert.deepEqual(view.events, EVENT_KINDS)
   assert.equal(view.popupReady, true)
   assert.equal(typeof view.describe, 'function')

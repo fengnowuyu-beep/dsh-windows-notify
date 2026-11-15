@@ -1,7 +1,7 @@
 {
   "name": "dsh-windows-notify",
-  "version": "1.1.0",
-  "description": "Windows 桌面通知 + 分场景提示音：对话完成、出错、等待审批、等待确认（计划评审）、等待回答、需要登录 · Desktop notifications with a distinct cue per DSH event",
+  "version": "1.4.0",
+  "description": "Windows 桌面通知 + 分场景提示音 + 点击跳回对话：对话完成、出错、等待审批、等待确认（计划评审）、等待回答、需要登录 · Desktop notifications with a distinct cue per DSH event; click one to reopen its conversation",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -37,7 +37,10 @@
   ],
   "scripts": {
     "test": "node test/host.test.mjs && node test/client.test.mjs",
-    "test:live": "node test/integration.mjs"
+    "test:live": "node test/integration.mjs",
+    "test:click": "node test/click-probe.mjs",
+    "test:stack": "node test/stack-probe.mjs",
+    "test:events": "node test/events-probe.mjs"
   },
   "keywords": [
     "dsh",
