@@ -2,6 +2,10 @@
   "name": "dsh-windows-notify",
   "version": "1.4.0",
   "description": "Windows 桌面通知 + 分场景提示音 + 点击跳回对话：对话完成、出错、等待审批、等待确认（计划评审）、等待回答、需要登录 · Desktop notifications with a distinct cue per DSH event; click one to reopen its conversation",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fengnowuyu-beep/dsh-windows-notify.git"
+  },
   "type": "module",
   "main": "lib/index.js",
   "exports": {
